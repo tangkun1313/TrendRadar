@@ -3499,9 +3499,10 @@ def send_to_notifications(
 from bs4 import BeautifulSoup
 
 def html_to_text(html: str) -> str:
-    """将 HTML 转成纯文本，避免飞书显示错乱"""
+    """将 HTML 转成纯文本"""
     soup = BeautifulSoup(html, "lxml")
     return soup.get_text(separator="\n")
+
 
 def send_to_feishu(
     webhook_url: str,
@@ -3517,7 +3518,6 @@ def send_to_feishu(
     if proxy_url:
         proxies = {"http": proxy_url, "https": proxy_url}
 
-    # 获取分批内容
     batches = split_content_into_batches(
         report_data,
         "feishu",
@@ -3528,34 +3528,20 @@ def send_to_feishu(
 
     print(f"飞书消息分为 {len(batches)} 批次发送 [{report_type}]")
 
-    # 逐批发送
     for i, batch_content in enumerate(batches, 1):
 
-        # 🔥 关键：将 HTML 转成纯文本
+        # 将 HTML 转纯文本
         batch_content = html_to_text(batch_content)
 
-        batch_size = len(batch_content.encode("utf-8"))
-        print(
-            f"发送飞书第 {i}/{len(batches)} 批次，大小：{batch_size} 字节 [{report_type}]"
-        )
-
-        # 批次提示
+        # 加批次标识
         if len(batches) > 1:
-            batch_header = f"[第 {i}/{len(batches)} 批次]\n\n"
-            batch_content = batch_header + batch_content
+            batch_content = f"[第 {i}/{len(batches)} 批次]\n\n" + batch_content
 
-        total_titles = sum(
-            len(stat["titles"]) for stat in report_data["stats"] if stat["count"] > 0
-        )
-        now = get_beijing_time()
-
+        # 飞书 text 消息只允许这两个字段
         payload = {
             "msg_type": "text",
             "content": {
-                "total_titles": total_titles,
-                "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                "report_type": report_type,
-                "text": batch_content,
+                "text": batch_content
             },
         }
 
@@ -3570,21 +3556,17 @@ def send_to_feishu(
                     if i < len(batches):
                         time.sleep(CONFIG["BATCH_SEND_INTERVAL"])
                 else:
-                    error_msg = result.get("msg") or result.get("StatusMessage", "未知错误")
-                    print(
-                        f"飞书第 {i}/{len(batches)} 批次发送失败 [{report_type}]，错误：{error_msg}"
-                    )
+                    print(f"飞书第 {i}/{len(batches)} 批次失败：{result}")
                     return False
             else:
-                print(
-                    f"飞书第 {i}/{len(batches)} 批次发送失败 [{report_type}]，状态码：{response.status_code}"
-                )
+                print(f"飞书 HTTP 错误：{response.status_code}")
                 return False
+
         except Exception as e:
-            print(f"飞书第 {i}/{len(batches)} 批次发送出错 [{report_type}]：{e}")
+            print(f"飞书发送异常：{e}")
             return False
 
-    print(f"飞书所有 {len(batches)} 批次发送完成 [{report_type}]")
+    print(f"飞书所有批次发送完成 [{report_type}]")
     return True
 
 
