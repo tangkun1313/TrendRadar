@@ -3496,6 +3496,13 @@ def send_to_notifications(
     return results
 
 
+from bs4 import BeautifulSoup
+
+def html_to_text(html: str) -> str:
+    """将 HTML 转成纯文本，避免飞书显示错乱"""
+    soup = BeautifulSoup(html, "lxml")
+    return soup.get_text(separator="\n")
+
 def send_to_feishu(
     webhook_url: str,
     report_data: Dict,
@@ -3504,13 +3511,13 @@ def send_to_feishu(
     proxy_url: Optional[str] = None,
     mode: str = "daily",
 ) -> bool:
-    """发送到飞书（支持分批发送）"""
+    """发送到飞书（支持分批发送，自动转纯文本）"""
     headers = {"Content-Type": "application/json"}
     proxies = None
     if proxy_url:
         proxies = {"http": proxy_url, "https": proxy_url}
 
-    # 获取分批内容，使用飞书专用的批次大小
+    # 获取分批内容
     batches = split_content_into_batches(
         report_data,
         "feishu",
@@ -3523,22 +3530,19 @@ def send_to_feishu(
 
     # 逐批发送
     for i, batch_content in enumerate(batches, 1):
+
+        # 🔥 关键：将 HTML 转成纯文本
+        batch_content = html_to_text(batch_content)
+
         batch_size = len(batch_content.encode("utf-8"))
         print(
             f"发送飞书第 {i}/{len(batches)} 批次，大小：{batch_size} 字节 [{report_type}]"
         )
 
-        # 添加批次标识
+        # 批次提示
         if len(batches) > 1:
-            batch_header = f"**[第 {i}/{len(batches)} 批次]**\n\n"
-            # 将批次标识插入到适当位置（在统计标题之后）
-            if "📊 **热点词汇统计**" in batch_content:
-                batch_content = batch_content.replace(
-                    "📊 **热点词汇统计**\n\n", f"📊 **热点词汇统计** {batch_header}"
-                )
-            else:
-                # 如果没有统计标题，直接在开头添加
-                batch_content = batch_header + batch_content
+            batch_header = f"[第 {i}/{len(batches)} 批次]\n\n"
+            batch_content = batch_header + batch_content
 
         total_titles = sum(
             len(stat["titles"]) for stat in report_data["stats"] if stat["count"] > 0
@@ -3561,10 +3565,8 @@ def send_to_feishu(
             )
             if response.status_code == 200:
                 result = response.json()
-                # 检查飞书的响应状态
                 if result.get("StatusCode") == 0 or result.get("code") == 0:
                     print(f"飞书第 {i}/{len(batches)} 批次发送成功 [{report_type}]")
-                    # 批次间间隔
                     if i < len(batches):
                         time.sleep(CONFIG["BATCH_SEND_INTERVAL"])
                 else:
